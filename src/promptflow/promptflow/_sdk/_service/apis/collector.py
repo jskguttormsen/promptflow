@@ -108,6 +108,10 @@ def _try_write_trace_to_cosmosdb(
 
         logger.info(f"Start writing trace to cosmosdb, total spans count: {len(all_spans)}.")
         start_time = datetime.now()
+        blob_container_client, blob_base_uri = _try_get_blob_container_client(
+            logger, subscription_id, resource_group_name, workspace_name, credential
+        )
+
         from promptflow.azure._storage.cosmosdb.client import get_client
         from promptflow.azure._storage.cosmosdb.span import Span as SpanCosmosDB
         from promptflow.azure._storage.cosmosdb.summary import Summary
@@ -135,7 +139,7 @@ def _try_write_trace_to_cosmosdb(
             span_client = get_client(
                 CosmosDBContainerName.SPAN, subscription_id, resource_group_name, workspace_name, credential
             )
-            result = SpanCosmosDB(span, created_by).persist(span_client)
+            result = SpanCosmosDB(span, created_by).persist(span_client, blob_container_client, blob_base_uri)
             # None means the span already exists, then we don't need to persist the summary also.
             if result is not None:
                 line_summary_client = get_client(
@@ -157,3 +161,55 @@ def _try_write_trace_to_cosmosdb(
         stack_trace = traceback.format_exc()
         logger.error(f"Failed to write trace to cosmosdb: {e}, stack trace is {stack_trace}")
         return
+
+
+def _try_get_blob_container_client(
+    logger: logging.Logger,
+    subscription_id: str,
+    resource_group_name: str,
+    workspace_name: str,
+    credential: Optional[object] = None,
+):
+    try:
+        from azure.ai.ml import MLClient
+        from azure.ai.ml._azure_environments import _get_storage_endpoint_from_metadata
+        from azure.ai.ml._restclient.v2022_10_01.models import DatastoreType
+        from azure.ai.ml.constants._common import STORAGE_ACCOUNT_URLS
+        from azure.storage.blob import ContainerClient
+
+        if credential is None:
+            from azure.identity import DefaultAzureCredential
+
+            credential = DefaultAzureCredential()
+
+        ml_client = MLClient(
+            credential=credential,
+            subscription_id=subscription_id,
+            resource_group_name=resource_group_name,
+            workspace_name=workspace_name,
+        )
+
+        default_datastore = ml_client.datastores.get_default()
+        if default_datastore.type != DatastoreType.AZURE_BLOB:
+            logger.error(f"Default datastore is {default_datastore.type}, not AzureBlob, skip getting blob client.")
+            return
+
+        storage_endpoint = _get_storage_endpoint_from_metadata()
+        account_url = STORAGE_ACCOUNT_URLS[DatastoreType.AZURE_BLOB].format(
+            default_datastore.account_name, storage_endpoint
+        )
+
+        from azure.ai.ml.constants._common import LONG_URI_FORMAT
+
+        # Datastore is a notion of AzureML, it is not a notion of Blob Storage.
+        # So, we cannot get datastore name by blob client.
+        # To generate the azureml uri has datastore name, we need to generate the uri here and pass in to cosmos client.
+
+        return ContainerClient(
+            account_url=account_url, container_name=default_datastore.container_name, credential=credential
+        ), LONG_URI_FORMAT.format(subscription_id, resource_group_name, workspace_name, default_datastore.name, "")
+
+    except Exception as e:
+        stack_trace = traceback.format_exc()
+        logger.error(f"Failed to get blob client: {e}, stack trace is {stack_trace}")
+        return None, ""
