@@ -22,6 +22,7 @@ from promptflow.executor._service.utils.service_utils import (
 )
 from promptflow.executor.flow_executor import FlowExecutor, execute_flow
 from promptflow.storage._run_storage import DefaultRunStorage
+from promptflow.tracing._start_trace import setup_exporter_from_environ
 
 router = APIRouter(prefix="/execution")
 
@@ -83,6 +84,7 @@ def flow_test(request: FlowExecutionRequest):
     # resolve environment variables
     set_environment_variables(request)
     enable_async_execution()
+    setup_exporter_from_environ()
     # execute flow
     storage = DefaultRunStorage(base_dir=request.working_dir, sub_dir=request.output_dir)
     with get_log_context(request):
@@ -102,6 +104,7 @@ def single_node_run(request: NodeExecutionRequest):
     request.validate_request()
     # resolve environment variables
     set_environment_variables(request)
+    setup_exporter_from_environ()
     storage = DefaultRunStorage(base_dir=request.working_dir, sub_dir=request.output_dir)
     with _change_working_dir(request.working_dir), get_log_context(request):
         return FlowExecutor.load_and_exec_node(
