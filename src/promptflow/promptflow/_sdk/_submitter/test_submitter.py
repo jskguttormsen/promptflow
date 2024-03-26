@@ -30,7 +30,6 @@ from ..._utils.async_utils import async_run_allowing_running_loop
 from ..._utils.dataclass_serializer import convert_eager_flow_output_to_dict
 from ..._utils.flow_utils import dump_flow_result
 from ..._utils.logger_utils import get_cli_sdk_logger
-from ...batch import APIBasedExecutorProxy, CSharpExecutorProxy
 from .._configuration import Configuration
 from ..entities._flow import FlexFlow
 from .utils import (
@@ -87,11 +86,11 @@ class TestSubmitter:
         self._target_node = None
         self._storage = None
         self._enable_stream_output = None
-        self._executor_proxy: Optional[APIBasedExecutorProxy] = None
+        self._executor_proxy = None
         self._within_init_context = False
 
     @property
-    def executor_proxy(self) -> APIBasedExecutorProxy:
+    def executor_proxy(self):
         self._raise_if_not_within_init_context()
         return self._executor_proxy
 
@@ -269,22 +268,19 @@ class TestSubmitter:
                     sub_dir=output_sub / "intermediate",
                 )
 
-                # TODO: set up executor proxy for all languages
-                if self.flow.language == FlowLanguage.CSharp:
-                    self._executor_proxy = async_run_allowing_running_loop(
-                        CSharpExecutorProxy.create,
-                        self.flow.path,
-                        self.flow.code,
-                        connections=self._connections,
-                        storage=self._storage,
-                        log_path=log_path,
-                        enable_stream_output=stream_output,
-                    )
+                self._executor_proxy = ProxyFactory().create_executor_proxy(
+                    self.flow.path,
+                    self.flow.code,
+                    connections=self._connections,
+                    storage=self._storage,
+                    log_path=log_path,
+                    enable_stream_output=stream_output,
+                    language=self.flow.language,
+                )
 
                 try:
                     yield self
                 finally:
-                    # TODO: this is dangerous as we may not release resources
                     if self.executor_proxy:
                         async_run_allowing_running_loop(self.executor_proxy.destroy)
 
